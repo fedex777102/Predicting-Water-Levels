@@ -1,0 +1,888 @@
+---
+title: "Preliminary Data Analysis on Lake Bilancino"
+author: "Alex Federspiel"
+date: "4/8/2021"
+output: pdf_document
+---
+
+1.  Propose a question that you will explore for the final project.  What
+makes it interesting? Difficult?
+2.  Provide a more detailed CoNVO statement (400-600 words)  
+3.  Preliminary analysis including data visualization.
+4.  Apply methods using set of methods following the same rules as the 
+applicable homework assignment (e.g. is this a regression problem or a 
+classification problem. Pick one from each class of methods)
+6.  Plan of work.  Identify what class of methods you will be comparing in the 
+final project.
+
+## Effects of Rainfall
+
+Five of the main variables affecting the water level of Lake Bilancino are the rainfalls measured in different cities: Cavallina, Mangona, Le Croci, Sant'Agata, and San Piero. While being able to predict Lake Bilancino's water level is the main goal, I want to also focus on the effects of the rainfall specifically. Rainfall, recorded in a city, doesn't travel instantly to the lake. How long does it take for the rain to reach the lake and have an effect? Also, which city's rainfall has more of an impact on Lake Bilancino? 
+
+This is an interesting idea to explore because it helps build a more accurate model. It will add in more variables for specific days for each city, and it can potentially feature select by highlighting which cities have little to no impact on the lake. For The Acea Group, it can be beneficial to know that intense rain in one city might not be as big a threat or that a drought in another city might mean significant changes for the lake.
+
+What makes this difficult though is that rainfall is hard to model. There are many factors that go into accurately modeling it. The rain seeps into the ground in a process known as infiltration. Some of the factors that can affect infiltration are the type of ground, the saturation of the ground, and even the slope of the ground. The infiltrated water, which is called groundwater, moves slowly, and can be lost due to evaporation or evapotranspiration which is basically just water being used by plants. Finally, the groundwater makes it to the waterbody.
+
+Another difficulty is the delay in the rainfall reaching the river. Because all the cities are different distances away, with different ecological characteristics to them, their rainfall will affect the lake at different times. There also isn't a set window of time to look back. Do I look back only a week? Two weeks? A month?
+
+## CoNVO Statement
+
+To say that water is an invaluable resource is to understate its importance, so naturally the efforts of those like the Acea Group are best spent as efficiently as possible, both for their own benefit and for the benefit of their consumers. As an Italian multiutility operator, they engage in the water sector amongst others with a network made up of aquifers, lakes, rivers, and springs supplying upwards of nine million people in locations like Lazio, Tuscany, Molise, and Campania. Given the complexities inherent in meeting the demands of their many customers over such a wide area, efficiently supplying this resource provides a significant challenge.
+	
+Everyone needs water, but it’s not always as simple to say where they’ll get it from. Water levels across this myriad of sources fluctuates seasonally. In the fall and winter these levels tend to rise; conversely they drop in the spring and summer. In addition to anticipating the general supply, the Acea Group needs to be able to provide their customers in a way that allows them to still preserve the sources’ water if the levels get too low.
+
+This project will utilize approximately six years of data on rainfall, temperature, water levels, and flow rates in order to build a predictive model that will forecast a body of water’s level for any particular period. The model will similarly be used to inform which of the listed variables produce the greatest effects on water levels.With this information, the Acea Group can strategically plan ahead for potential shortage or increased supply; most importantly, they will be able to utilize the model to warn of potentially dangerous strains on the water source supplies, allowing them to, for example, increase water prices to reduce commercial usage, or place restrictions on superfluous water usage. If addressed early and gradually with aid from a predictive model, effects on consumers and residents in the affected area will be less severe.
+
+Provided the model shows productive results for the Acea Group, they can use it weekly to forecast the levels of their water sources. Depending on the noted impact of the considered variables, further investigation into each variable and their individual levels of impact on water sources can be conducted so as to provide insights for improvements to the existing model, or even new iterations. To keep this model accurate it will almost certainly need to be re-assessed and updated with additional data on a yearly basis, largely due to the majority of predictors being based on ever-changing environmental factors. If in five years’ time there were no periods where the waters reached dangerously low levels, or where the Acea Group had to implement social restrictions (“if it’s yellow keep it mellow,” etc.), this model would be a considerable success.
+
+```{r packages, include = FALSE}
+  library(readr)
+  library(tidyverse)
+  library(lubridate)
+  library(lattice)
+  library(caret)
+  library(e1071)
+  library(corrplot)
+  library(elasticnet)
+  library(glmnet)
+```
+
+```{r import data, include = FALSE}
+  ## I think you'll probably have to change this path.
+  Lake_Bilancino <- read_csv("C:/Users/afede/Desktop/Grad School/Data Science/Project/Alex_Federspiel_Project/Lake_Bilancino.csv")
+  LB_restricted <- Lake_Bilancino[579:nrow(Lake_Bilancino),]
+```
+
+```{r new data set, include = FALSE}
+  ##put the date in a date format
+  LB <- LB_restricted %>% mutate(Date = dmy(Date))
+
+  ## adjust Lake_Level so it's not based on sea level (i.e. subtract 221)
+  LB <- LB %>% mutate(Lake_Level = (Lake_Level - 221))
+  
+  ## switching to Fahrenheit because I'm a filthy American
+  LB <- LB %>% mutate(Temperature_Le_Croci = ((Temperature_Le_Croci * 1.8) + 32))
+```
+
+## Preliminary Analysis
+
+Looking at the correlation between **Rainfall** and **Lake_Level** previously, I didn't see much. Logically, it seemed there should be something. Rainfall should affect the lake level. Plotting the two against each other though, gives a mess.
+
+```{r rainfall vs. lake, echo = FALSE}
+  ggplot(LB, aes(Rainfall_Mangona, Lake_Level)) + 
+    geom_point(alpha = 0.2, color = "dodgerblue4") +
+    labs(title = "Rainfall in Mangona vs. Lake Level", x = "Mangona Rainfall (mm)", 
+         y = "Lake Level (m)")
+```
+
+The issue was I needed to look at the change in the lake level. **Weekly_Lake_Change** was added to the dataset and takes the difference between the lake level in row $i$ and row $i-7$.
+
+**Min**|**1Q**|**Med**|**Mean**|**3Q**|**Max**|**Range**
+-------|------|-------|--------|------|-------|---------
+-1.27|-0.25|-0.06|-0.000605|0.07|5.5|6.77
+
+```{r change in lake level, include = FALSE}
+  ## let t be the day we're looking at. then t-7 is a week ago.
+  ## change in lake level over a week will be (LL at t) - (LL at t-7)
+  lake_change <- function(t) {
+    difference <- signif(LB$Lake_Level[t] - LB$Lake_Level[t-7], 4)
+    return(difference)
+  }
+
+  lake_change_vector <- c()
+  
+  
+  ## Dr. Hinder, if you're reading this, just take a look at the fact that I reached peak programming
+  ## by making an if statement in a for loop (this is my magnum opus)
+  
+  for (j in 1:nrow(LB)) {
+    ## stops j from being negative which just calls the entire column minus the row
+    if (j - 7 > 0) {
+      lake_change_vector <- c(lake_change_vector, lake_change(j))
+    }
+    
+    else{
+      lake_change_vector <- c(lake_change_vector, "NA")
+    }
+  }
+  
+  LB <- LB %>% mutate(Weekly_Lake_Change = as.numeric(lake_change_vector))
+```
+
+```{r weekly lake change vs. rainfall, echo = FALSE, warning = FALSE}
+  ggplot(LB, aes(Rainfall_Mangona, Weekly_Lake_Change)) + 
+    geom_point(alpha = 0.2, color = "dodgerblue4") +
+    labs(title = "Rainfall in Mangona vs. Weekly Lake Change", x = "Mangona Rainfall (mm)", 
+         y = "Weekly Lake Change (m)")
+```
+
+Looking better, but the values are still pooled around $0$ regardless of the rainfall. This is most likely due to the fact that the rainfall is not adjusted for a delay. To see a simple trend, I summed the rainfall for each city over a week. **Weekly_Rain** sums the rainfall from row $i-6$ through $i$. 
+```{r rainfall sum over week, include = FALSE}
+  ## adds up the rain for day t and throughout the week to t-6.
+  ## where c is the city the rain is in
+  rain_sum <- function(t, c) {
+      sum <- signif(LB[[t, c]] + LB[[t - 1, c]] + LB[[t - 2, c]] + 
+                    LB[[t - 3, c]] + LB[[t - 4, c]] + LB[[t - 5, c]] +
+                    LB[[t - 6, c]], 4)
+      return(sum)
+  }
+  
+## San Piero
+  s_piero_sum_vector <- c()  
+  for (i in 1:nrow(LB)){
+    if(i - 6 > 0) {
+      s_piero_sum_vector <- c(s_piero_sum_vector, rain_sum(i, 2))
+    }
+    else {
+      s_piero_sum_vector <- c(s_piero_sum_vector, "NA")
+    }
+  }
+  LB <- LB %>% mutate(S_Piero_Weekly_Rain = as.numeric(s_piero_sum_vector))
+  
+  ## Mangona
+  mangona_sum_vector <- c()  
+  for (i in 1:nrow(LB)){
+    if(i - 6 > 0) {
+      mangona_sum_vector <- c(mangona_sum_vector, rain_sum(i, 3))
+    }
+    else {
+      mangona_sum_vector <- c(mangona_sum_vector, "NA")
+    }
+  }
+  LB <- LB %>% mutate(Mangona_Weekly_Rain = as.numeric(mangona_sum_vector))
+  
+  ## Sant'Agata
+  s_agata_sum_vector <- c()  
+  for (i in 1:nrow(LB)){
+    if(i - 6 > 0) {
+      s_agata_sum_vector <- c(s_agata_sum_vector, rain_sum(i, 4))
+    }
+    else {
+      s_agata_sum_vector <- c(s_agata_sum_vector, "NA")
+    }
+  }
+  LB <- LB %>% mutate(S_Agata_Weekly_Rain = as.numeric(s_agata_sum_vector))
+  
+  ## Cavallina
+  cavallina_sum_vector <- c() 
+  for (i in 1:nrow(LB_restricted)){
+    if(i - 6 > 0) {
+      cavallina_sum_vector <- c(cavallina_sum_vector, rain_sum(i, 5))
+    }
+    else {
+      cavallina_sum_vector <- c(cavallina_sum_vector, "NA")
+    }
+  }
+  LB <- LB %>% mutate(Cavallina_Weekly_Rain = as.numeric(cavallina_sum_vector))
+  
+  ## Le Croci
+  le_croci_sum_vector <- c()
+  for (i in 1:nrow(LB)){
+    if(i - 6 > 0) {
+      le_croci_sum_vector <- c(le_croci_sum_vector, rain_sum(i, 6))
+    }
+    else {
+      le_croci_sum_vector <- c(le_croci_sum_vector, "NA")
+    }
+  }
+  LB <- LB %>% mutate(Le_Croci_Weekly_Rain = as.numeric(le_croci_sum_vector))
+```
+
+```{r dataset for modeling, include = FALSE}
+  LB_model_data <- LB[8:nrow(LB),] %>% 
+    select(S_Piero_Weekly_Rain:Le_Croci_Weekly_Rain, Flow_Rate, 
+           Weekly_Lake_Change)
+```
+
+```{r lake change vs rain sum, echo = FALSE}
+  ggplot(LB_model_data, aes(x = Mangona_Weekly_Rain, y = Weekly_Lake_Change)) + 
+    geom_point(alpha = 0.2, color = "dodgerblue4") + 
+    labs(title = "Weekly Rainfall in Mangona vs. Weekly Change in Lake Level",
+         y = "Weekly Lake Change (m)", 
+         x = "Weekly Mangona Rainfall (mm)")
+```
+
+Now, as the sum of rainfall increases, there is an increase in the change in the lake level.
+
+## Models
+
+This led me to two models to predict lake level change, and find out which cities had the greatest impact on the lake.
+
+### Simple Model
+
+The simple model just looks at the sum of the rainfall over a week for each city.
+$$\Delta \text{Lake Level} = \beta_1 \sum\text{Rain}_{\text{Cavallina}} + \beta_2 \sum\text{Rain}_{\text{Mangona}}$$ 
+$$+ \beta_3 \sum\text{Rain}_{\text{Le Croci}} + \beta_4 \sum\text{Rain}_{\text{Sant'Agata}}+ \beta_5 \sum\text{Rain}_{\text{San Piero}} +\beta_6 \text{Flow Rate}$$
+
+### Complex Model
+
+The complex model instead adds each city's rainfall, then adds the rainfall of the previous day, then the day after, and so on. This continuous for as far back as the user wants to look. I looked back seven days in order to keep it similar time wise to the simple model. Since there are five cities and each now has a variable for rainfall for up to seven days back, this gives 35 variables.
+
+$$\Delta\text{Lake Level}= \beta_1 \text{rain}_i + \beta_2\text{rain}_{i-1} + \cdots + \beta_{n-1}\text{rain}_{i-t}+\beta_n \text{ FlowRate}$$
+
+### Linear Regression
+
+Since both of these are linear and regression problems, the first predictive model used was a standard linear regression.
+
+```{r split data, include = FALSE}
+  set.seed(42)
+  number_train <- floor(0.7 * nrow(LB_model_data))
+
+  training_index <- sample(1:nrow(LB_model_data), number_train)
+
+  train_LB <- LB_model_data[training_index,]
+  test_LB <- LB_model_data[-training_index,]
+  
+  x <- data.frame(train_LB %>% select(-Weekly_Lake_Change))
+  y <- train_LB$Weekly_Lake_Change
+```
+
+```{r setting up and day 0, include = FALSE}
+  LB_complex <- LB %>% select(Weekly_Lake_Change, Flow_Rate)
+  LB_complex <- LB_complex %>% mutate(SP_0 = LB_restricted$Rainfall_S_Piero,
+                                      M_0 = LB_restricted$Rainfall_Mangona,
+                                      SA_0 = LB_restricted$Rainfall_S_Agata,
+                                      C_0 = LB_restricted$Rainfall_Cavallina,
+                                      LC_0 = LB_restricted$Rainfall_Le_Croci)
+
+```
+
+```{r day 1, include = FALSE}
+  sp1 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sp1 <- c(sp1, LB_complex$SP_0[k-1])
+    }
+    else {
+      sp1 <- c(sp1, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SP_1 = as.numeric(sp1))
+  
+  m1 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      m1 <- c(m1, LB_complex$M_0[k-1])
+    }
+    else {
+      m1 <- c(m1, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(M_1 = as.numeric(m1))
+  
+  sa1 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sa1 <- c(sa1, LB_complex$SA_0[k-1])
+    }
+    else {
+      sa1 <- c(sa1, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SA_1 = as.numeric(sa1))
+  
+  c1 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      c1 <- c(c1, LB_complex$C_0[k-1])
+    }
+    else {
+      c1 <- c(c1, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(C_1 = as.numeric(c1))  
+  
+  lc1 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      lc1 <- c(lc1, LB_complex$LC_0[k-1])
+    }
+    else {
+      lc1 <- c(lc1, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(LC_1 = as.numeric(lc1))  
+```
+
+```{r day 2, include = FALSE}
+  sp2 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sp2 <- c(sp2, LB_complex$SP_1[k-1])
+    }
+    else {
+      sp2 <- c(sp2, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SP_2 = as.numeric(sp2))
+  
+  m2 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      m2 <- c(m2, LB_complex$M_1[k-1])
+    }
+    else {
+      m2 <- c(m2, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(M_2 = as.numeric(m2))
+  
+  sa2 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sa2 <- c(sa2, LB_complex$SA_1[k-1])
+    }
+    else {
+      sa2 <- c(sa2, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SA_2 = as.numeric(sa2))
+  
+  c2 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      c2 <- c(c2, LB_complex$C_1[k-1])
+    }
+    else {
+      c2 <- c(c2, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(C_2 = as.numeric(c2))  
+  
+  lc2 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      lc2 <- c(lc2, LB_complex$LC_1[k-1])
+    }
+    else {
+      lc2 <- c(lc2, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(LC_2 = as.numeric(lc2))  
+```
+
+```{r day 3, include = FALSE}
+  sp3 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sp3 <- c(sp3, LB_complex$SP_2[k-1])
+    }
+    else {
+      sp3 <- c(sp3, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SP_3 = as.numeric(sp3))
+  
+  m3 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      m3 <- c(m3, LB_complex$M_2[k-1])
+    }
+    else {
+      m3 <- c(m3, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(M_3 = as.numeric(m3))
+  
+  sa3 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sa3 <- c(sa3, LB_complex$SA_2[k-1])
+    }
+    else {
+      sa3 <- c(sa3, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SA_3 = as.numeric(sa3))
+  
+  c3 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      c3 <- c(c3, LB_complex$C_2[k-1])
+    }
+    else {
+      c3 <- c(c3, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(C_3 = as.numeric(c3))  
+  
+  lc3 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      lc3 <- c(lc3, LB_complex$LC_2[k-1])
+    }
+    else {
+      lc3 <- c(lc3, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(LC_3 = as.numeric(lc3))  
+```
+
+```{r day 4, include = FALSE}
+  sp4 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sp4 <- c(sp4, LB_complex$SP_3[k-1])
+    }
+    else {
+      sp4 <- c(sp4, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SP_4 = as.numeric(sp4))
+  
+  m4 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      m4 <- c(m4, LB_complex$M_3[k-1])
+    }
+    else {
+      m4 <- c(m4, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(M_4 = as.numeric(m4))
+  
+  sa4 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sa4 <- c(sa4, LB_complex$SA_3[k-1])
+    }
+    else {
+      sa4 <- c(sa4, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SA_4 = as.numeric(sa4))
+  
+  c4 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      c4 <- c(c4, LB_complex$C_3[k-1])
+    }
+    else {
+      c4 <- c(c4, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(C_4 = as.numeric(c4))  
+  
+  lc4 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      lc4 <- c(lc4, LB_complex$LC_3[k-1])
+    }
+    else {
+      lc4 <- c(lc4, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(LC_4 = as.numeric(lc4))  
+```
+
+```{r day 5, include = FALSE}
+  sp5 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sp5 <- c(sp5, LB_complex$SP_4[k-1])
+    }
+    else {
+      sp5 <- c(sp5, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SP_5 = as.numeric(sp5))
+  
+  m5 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      m5 <- c(m5, LB_complex$M_4[k-1])
+    }
+    else {
+      m5 <- c(m5, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(M_5 = as.numeric(m5))
+  
+  sa5 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sa5 <- c(sa5, LB_complex$SA_4[k-1])
+    }
+    else {
+      sa5 <- c(sa5, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SA_5 = as.numeric(sa5))
+  
+  c5 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      c5 <- c(c5, LB_complex$C_4[k-1])
+    }
+    else {
+      c5 <- c(c5, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(C_5 = as.numeric(c5))  
+  
+  lc5 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      lc5 <- c(lc5, LB_complex$LC_4[k-1])
+    }
+    else {
+      lc5 <- c(lc5, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(LC_5 = as.numeric(lc5))  
+```
+
+```{r day 6, include = FALSE}
+  sp6 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sp6 <- c(sp6, LB_complex$SP_5[k-1])
+    }
+    else {
+      sp6 <- c(sp6, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SP_6 = as.numeric(sp6))
+  
+  m6 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      m6 <- c(m6, LB_complex$M_5[k-1])
+    }
+    else {
+      m6 <- c(m6, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(M_6 = as.numeric(m6))
+  
+  sa6 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sa6 <- c(sa6, LB_complex$SA_5[k-1])
+    }
+    else {
+      sa6 <- c(sa6, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SA_6 = as.numeric(sa6))
+  
+  c6 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      c6 <- c(c6, LB_complex$C_5[k-1])
+    }
+    else {
+      c6 <- c(c6, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(C_6 = as.numeric(c6))  
+  
+  lc6 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      lc6 <- c(lc6, LB_complex$LC_5[k-1])
+    }
+    else {
+      lc6 <- c(lc6, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(LC_6 = as.numeric(lc6))  
+```
+
+```{r day 7, include = FALSE}
+  sp7 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sp7 <- c(sp7, LB_complex$SP_6[k-1])
+    }
+    else {
+      sp7 <- c(sp7, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SP_7 = as.numeric(sp7))
+  
+  m7 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      m7 <- c(m7, LB_complex$M_6[k-1])
+    }
+    else {
+      m7 <- c(m7, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(M_7 = as.numeric(m7))
+  
+  sa7 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      sa7 <- c(sa7, LB_complex$SA_6[k-1])
+    }
+    else {
+      sa7 <- c(sa7, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(SA_7 = as.numeric(sa7))
+  
+  c7 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      c7 <- c(c7, LB_complex$C_6[k-1])
+    }
+    else {
+      c7 <- c(c7, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(C_7 = as.numeric(c7))  
+  
+  lc7 <- c()
+  for (k in 1:nrow(LB_complex)){
+    if(k - 1 > 0) {
+      lc7 <- c(lc7, LB_complex$LC_6[k-1])
+    }
+    else {
+      lc7 <- c(lc7, "NA")
+    }
+  }
+  LB_complex <- LB_complex %>% mutate(LC_7 = as.numeric(lc7))  
+```
+
+```{r trim na row, include = FALSE}
+  LB_complex_fit <- LB_complex[8:nrow(LB_complex),]
+```
+
+```{r split data complex, include = FALSE}
+  set.seed(42)
+  number_train <- floor(0.7 * nrow(LB_complex_fit))
+  training_index <- sample(1:nrow(LB_complex_fit), number_train)
+
+  train_complex_LB <- LB_complex_fit[training_index,]
+  test_complex_LB <- LB_complex_fit[-training_index,]
+  
+  x_complex <- data.frame(train_complex_LB %>% select(-Weekly_Lake_Change))
+  y_complex <- train_complex_LB$Weekly_Lake_Change
+```
+
+```{r train control, include = FALSE}
+  ctrl <- trainControl(method = "cv", number = 10)
+```
+
+```{r linear model, include = FALSE}
+  set.seed(42)
+
+  LB_linear_regression <- train(x = x, y = y, method = "lm",
+                                 trControl = ctrl)
+```
+
+```{r linear model complex, include = FALSE}
+  set.seed(42)
+
+  LB_complex_linear <- train(x = x_complex, y = y_complex, method = "lm",
+                                 trControl = ctrl)
+```
+
+```{r results, include = FALSE}
+  LB_linear_regression$results
+```
+
+```{r results complex, include = FALSE}
+  LB_complex_linear$results
+  LB_complex_linear$finalModel
+```
+
+Both the simple and complex model performed subpar.
+
+`          |**RMSE**|$R^2$
+-----------|--------|------
+**Simple** |0.3349  |0.4081
+**Complex**|0.3189  |0.4673
+
+One of the major issues with the linear model was that it gave negative coefficients for the rainfall variables. Based on this, the rainfall in these cities would be bringing down the lake's level. Due to the high number of variables in the complex model, I'm only displaying the results of the simple model. The flow rate is allowed to be negative because it indicates flow out of the lake.
+
+```{r coefficients, echo = FALSE}
+  LB_linear_regression$finalModel$coefficients
+```
+
+### LASSO 
+
+In order to force these unwanted coefficients to be zero, I used a LASSO model. The parameter lambda was tuned at $0$, $0.01$, and $0.1$ and it looked at fractions between $0.25$ and $1$. The model gave an optimal fraction of $1$ and a lambda of $0.01$ but the issue with this is that the coefficients are still negative. 
+
+To find the optimal coefficients, I used predict.enet to find what lambda and fraction values brought the negative coefficients to zero. In this case, it was a lambda of $0$ and a fraction $0.67$. 
+
+```{r simple lasso, include = FALSE}
+  set.seed(42)
+
+  lassoGrid <- expand.grid(lambda = c(0, 0.01, 0.1), 
+                           fraction = seq(0.25, 1, length = 10))
+  
+  LB_lasso <- train(x = x, y = y, method = "enet", 
+                     tuneGrid = lassoGrid, trControl = ctrl)
+  
+  LB_lasso$results
+  LB_lasso$bestTune
+```
+
+```{r lasso plot, echo = FALSE}
+  ggplot(LB_lasso) + 
+    geom_hline(yintercept = 0.3348718, linetype = "dashed") + 
+    geom_hline(yintercept = 0.3379851, linetype = "dashed")
+```
+
+Thus, the coefficients were:
+
+```{r coefficients 2, echo = FALSE}
+  predict.enet(LB_lasso$finalModel, 
+               s = 5, 
+               type = "coef", 
+               mode = "step")$coefficients
+```
+
+Of the five cities, Mangona actually has the largest impact on the lake, then Cavallina, and an order of magnitude behind was San Piero. Both Le Croci and Sant'Agata, originally negative, got LASSOed to zero.
+
+The final step, before moving on, was to compare this on the test set. The line $y=x$ was plotted in red and the points did cluster near it which is promising. But this isn't the best model and it shows by the fact that they don't hug the line nicely.
+
+```{r predicting results 2, echo = FALSE}
+
+  set.seed(42)
+
+  x_test <- data.frame(test_LB %>% select(-Weekly_Lake_Change))
+  y_test <- test_LB$Weekly_Lake_Change
+  
+  lasso_check <- predict.enet(LB_lasso$finalModel, newx = x_test, type = "fit")
+  lasso_RMSE <- RMSE(lasso_check$fit[,5], y_test)
+  
+  lasso.df <- data.frame(y_test, lasso_check$fit[,5])
+  
+  ggplot(lasso.df, aes(y_test, lasso_check$fit[,5])) + 
+    geom_point(alpha = 0.2, color = "dodgerblue4") + 
+    geom_abline(intercept = 0, slope = 1, color = "red") +
+    xlab("Test Outcomes") + ylab("LASSO Predictions")
+```
+
+When applying LASSO to the complex model, it still gave negative coefficients for the optimum RMSE. Thus, a similar method as before was used. The predicted values had no negative coefficients when the fraction was $0.488$ and looking at the tuning plot, lambda would be $0$.
+
+```{r, include = FALSE}
+  set.seed(42)
+
+  LB_complex_lasso <- train(x = x_complex, y = y_complex, method = "enet", 
+                            tuneGrid = lassoGrid, trControl = ctrl)
+  
+  min(LB_complex_lasso$results$RMSE)
+  LB_complex_lasso$bestTune
+```
+
+```{r lasso plot 2, echo = FALSE}
+  ggplot(LB_complex_lasso)  
+    ##geom_hline(yintercept = 0.3348718, linetype = "dashed") + 
+    ##geom_hline(yintercept = 0.3379851, linetype = "dashed")
+```
+
+```{r coefficients 3, include = FALSE}
+  set.seed(42)
+  predict.enet(LB_complex_lasso$finalModel, 
+               s = 21, 
+               type = "coef", 
+               mode = "step")$coefficients
+```
+
+```{r, include = FALSE}
+  set.seed(42)
+  betas <- data.frame(predict.enet(LB_complex_lasso$finalModel, 
+               s = 21, 
+               type = "coef", 
+               mode = "step")$coefficients)
+
+  variable <- c("Flow_Rate", "SP_0", "M_0", "SA_0", "C_0", "LC_0",
+                "SP_1", "M_1", "SA_1", "C_1", "LC_1",
+                "SP_2", "M_2", "SA_2", "C_2", "LC_2",
+                "SP_3", "M_3", "SA_3", "C_3", "LC_3",
+                "SP_4", "M_4", "SA_4", "C_4", "LC_4",
+                "SP_5", "M_5", "SA_5", "C_5", "LC_5",
+                "SP_6", "M_6", "SA_6", "C_6", "LC_6",
+                "SP_7", "M_7", "SA_7", "C_7", "LC_7")
+  value <- c()
+  value <- betas[,1]
+  beta.df <- data.frame(variable, value)
+  variable_trim <- c()
+  value_trim <- c()
+
+  for(b in 1:nrow(beta.df)){
+    if(beta.df[[b,2]] != 0){
+      variable_trim <- c(variable_trim, beta.df[[b,1]])
+      value_trim <- c(value_trim, beta.df[[b,2]])
+    }
+  }
+  
+  type <- c("other", "mangona", "mangona", "cavallina", "san piero", "mangona", 
+            "cavallina", "san piero", "mangona", "cavallina", "san piero", 
+            "mangona", "cavallina", "mangona", "cavallina", "san piero", 
+            "mangona", "cavallina", "san piero", "mangona")
+  beta_trim <- data.frame(variable_trim, value_trim, type)
+  beta_trim <- beta_trim %>% mutate(Variable = variable_trim, Coefficient = value_trim, Type = type) %>% select(Variable:Type)
+```
+
+Similar to before, both Le Croci and Sant'Agata got LASSOed to zero, but in this case, all seven of their days did. The best city in the simple model, Mangona, is once again the best city in the complex model. All of its day delays had a positive impact on the lake with a day delay of 5 and 7 being the best ones. 
+
+```{r mangona, echo = FALSE}
+  beta_trim %>% filter(Type == "mangona") %>% 
+    arrange(desc(abs(Coefficient))) %>% select(-Type)
+```
+
+Cavallina did the second best. A delay of 7 days got dropped from the model which makes sense since it's right on the edge of the lake. A delay of 3 days and 2 days did the best.
+
+```{r cavallina, echo = FALSE}
+  beta_trim %>% filter(Type == "cavallina") %>% 
+    arrange(desc(abs(Coefficient))) %>% select(-Type)
+```
+
+Finally, there was San Piero. A delay of 7 days had a greater impact than any of Cavallina's, but more of its days were dropped from the model. 
+
+```{r san piero, echo = FALSE}
+  beta_trim %>% filter(Type == "san piero") %>% 
+    arrange(desc(abs(Coefficient))) %>% select(-Type)
+```
+
+So how does this model do when run on the test set? Again, not the best. The points do appear to hug the line a little better though.
+
+```{r predicting results, echo = FALSE}
+
+  set.seed(42)
+  x_test_complex <- data.frame(test_complex_LB %>% 
+                         select(-Weekly_Lake_Change))
+  y_test_complex <- test_complex_LB$Weekly_Lake_Change
+  
+  lasso_complex_check <- predict.enet(LB_complex_lasso$finalModel, 
+                                      newx = x_test_complex, 
+                                      type = "fit")
+  lasso_complex_RMSE <- RMSE(lasso_complex_check$fit[,21], y_test_complex)
+  
+  lasso_complex.df <- data.frame(y_test_complex, lasso_complex_check$fit[,21])
+  
+  ggplot(lasso_complex.df, aes(y_test_complex, lasso_complex_check$fit[,21])) + 
+    geom_point(alpha = 0.2, color = "dodgerblue4") + 
+    geom_abline(intercept = 0, slope = 1, color = "red") +
+    xlab("Test Outcomes") + ylab("LASSO Predictions")
+```
+
+## Why?
+
+So why does Mangona have the most impact of all the cities? Why do Le Croci and Sant'Agata have "no impact"? *(Quotes because they were purposefully brought to zero.)*
+
+Before this analysis, I believed distance played the crucial role but this shows that this is not the case. Mangona is actually the furthest city from the lake and Le Croci is one of the closest.
+
+(see lake bilancino map image in folder)
+
+Elevation was my second guess. Maybe Mangona was high up and gravity was helping the rain flow down whereas Sant'Agata and Le Croci were in basins of sorts. Looking at a topographical map however, the answer became obvious. 
+
+(see elevation map image in folder)
+
+Both Mangona and San Piero have streams running from them straight to the lake highlighted in red. Cavallina is located on the edge of the lake itself. So, these cities have direct pathways to the lake. 
+
+On the other hand, Sant'Agata doesn't. It's located near a stream that runs all the way down to San Piero first. This could indicate that I may need to look at a longer delay for Sant'Agata in order to see an impact.
+
+Le Croci is somewhat of an odd duck. It's located near a stream which does go to the lake yet it didn't have impact. I will have to investigate this further.
+
+## Going Forward
+
+Going forward, I will still need to look further back at Sant'Agata and see if it has an even longer delay than a week. I will also have to investigate ways to improve my model. As it stands, it doesn't do a good job at accurately predicting. 
+
+While linear models seem like the best option for what I'm going for, I do want to try using Regression Trees, Random Forests, and maybe even Neural Nets to see how their RMSE and $R^2$ values differ from the linear models. 

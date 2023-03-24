@@ -1,0 +1,341 @@
+---
+title: "Lake Bilancino EDA"
+author: "Alex Federspiel"
+date: "3/11/2021"
+output: pdf_document
+---
+
+```{r packages, include=FALSE}
+  library(readr)
+  library(tidyverse)
+  library(lubridate)
+  library(lattice)
+```
+
+```{r import data, include=FALSE}
+  ## I think you'll probably have to change this path.
+  Lake_Bilancino <- read_csv("C:/Users/afede/Desktop/Grad School/Data Science/Project/Alex_Federspiel_Project/Lake_Bilancino.csv")
+```
+
+## The Data
+This paper will be focusing on the Lake Bilancino dataset supplied by the Acea
+Group. The dataset is a collection of 6603 observations made from 2002 to 2020.
+It contains the measure of rainfall in five different cities surrounding Lake
+Bilancino, as well as the the temperature recordings from one of the cities. The
+lake itself has its water level and flow rate into it measured.
+
+The Acea Group is an Italian multiutily operator which manages and develops 
+water and electricity networks. The water sector of their company supplied this
+data with the goal of efficiently supplying their consumers with water.
+
+## Variables
+* Date
+  + Uniquely identifies a day.
+  + The data is ordinal and originally in the dd/mm/yyyy format. It spans from
+  3/06/2002 to 30/06/2020
+  + This is a potential predictor.
+* Rainfall_**X**
+  + The measure of rainfall in city **X** in millimeters.
+  + The data is nonnegative and continuous. The units are in mm.
+  + 
+  
+  **City**|**Min**|**1Q**|**Median**|**Mean**|**3Q**|**Max**
+    ----|---|--|------|----|--|---
+    **San Piero**|0|0|0|2.67|1.2|120.2
+    **Mangona**|0|0|0|3.34|1.4|110
+    **Sant'Agata**|0|0|0|2.67|1.2|120.2
+    **Cavallina**|0|0|0|2.675|0.6|113.6
+    **Le Croci**|0|0|0|3.13|1.2|88.4
+  + These are potential predictors.
+* Temperasure_Le_Croci
+  + The Celsius temperature detected by the thermometric station in Le Croci.
+  + The data is continuous. The units are in degrees Celsius.
+  + 
+  
+  **Min**|**1Q**|**Median**|**Mean**|**3Q**|**Max**|**Range**
+  ---|--|------|----|--|---|---
+  -5.35|9|14.5|14.53|20.1|34|39.35
+  + This is a potential predictor.
+* Lake_Level
+  + The lake's level measured in meters above the sea level. It has a depth of
+  31 meters.
+  + The data is nonnegative and continuous. The units are in m.
+  + 
+  
+   **Measure**|**Min**|**1Q**|**Median**|**Mean**|**3Q**|**Max**|**Range**
+  ---|---|--|------|----|--|---|---
+  **Sea Level**|243.5|248|250.2|249.6|251.4|252.8|9.3
+  **Non SL**|22.5|27|29.2|28.6|30.4|31.8|9.3
+  + This is an outcome.
+* Flow_Rate
+  + The lake's flow rate in cubic meters per second.
+  + The data is nonnegative and continuous. The units are in $m^3/s$.
+  + 
+  
+  **Min**|**1Q**|**Median**|**Mean**|**3Q**|**Max**|**Range**
+  ---|--|------|----|--|---|---
+  0.31|0.6|1.5|2.76|3|74.65|74.34
+  + This is an outcome.
+  
+## CoNVO Statement
+As mentioned previously, the Acea Group is an Italian multiutility operator. 
+Their water sector alone supplies upwards of nine million people in Lazio, 
+Tuscany, Umbria, Molise, and Campania. With that many customers, and over that 
+much area, efficiently supplying them with water can be a challenge. 
+
+Everyone needs water. Always. But its not always as simple to say where they’ll 
+get it from. The water level in waterbodies fluctuate seasonally. This means in 
+the fall and winter they’ll rise and in spring and summer, they’ll drop. The 
+Acea Group needs to be able to supply their customers while still preserving 
+water when levels get low.
+
+This project will use approximately 6 years of data on rainfall, temperature, 
+and water levels, to build a predictive model that would forecast a waterbody’s 
+level for any period. If water levels are forecasted to be low for a long 
+period, the Acea Group can take the necessary steps required to start preserving
+water early.
+
+If the water sector of the Acea Group is happy with the results of the model, 
+they can use it weekly to forecast the waterbody levels. It will also most 
+likely need to be retrained with new additional data yearly to keep it accurate.
+In five years’ time, if there were no times the water levels got dangerously 
+low, this model would be a success.
+
+## Missing Values
+Looking at the first couple rows at the dataset, there seem to be a lot of 
+missing values.  
+```{r head, include = FALSE}
+   head(Lake_Bilancino)
+```
+Further inspection revealed missing data for the first two years of the dataset. 
+The dataset was then reduced down to only include entries from January 2 2004 to
+June 30 2020. This brought it from 6603 observations down to 6025.
+```{r missing values, include = FALSE}
+  total_nan <- function(x) sum(is.na(x))
+  Lake_Bilancino %>% summarise(across(everything(), total_nan))
+  Lake_Bilancino %>% filter(is.na(Rainfall_Mangona))
+  ## It seems they didn't record data until 2004 (row 578).
+  Lake_Bilancino[578:nrow(Lake_Bilancino),] %>% 
+    summarise(across(everything(), total_nan))
+  Lake_Bilancino[578:nrow(Lake_Bilancino),] %>% 
+    filter(is.na(Temperature_Le_Croci))
+  ## Only remaining missing value is first temperature reading for Jan 1 04.
+  ## Only going to focus on January 2nd 2004 and on for the dataset.
+  Lake_Bilancino_restricted <- Lake_Bilancino[579:nrow(Lake_Bilancino),]
+```
+
+```{r turn Date into date type, include = FALSE}
+  ## uses Lubridate package to turn Date into a Date-type for easier plotting
+  Lake_Bilancino_restricted <- Lake_Bilancino_restricted %>% 
+    mutate(Date = dmy(Date))
+```
+
+## Rainfall Delay
+One challenge with forecasting water levels is that the rainfall recorded on a
+particular day doesn't affect the lake on that day. It takes time for the rain
+to soak into the ground and run to the river. The problem is that the exact
+amount of time is unknown.
+
+For this exploration, a variable $k$ was set up to adjust for this delay. A new
+dataset is created where only the rainfall observations are shifted down in the 
+dataset by $k$ days. This essentially ends up cutting off the first $k$ rows of
+non-rainfall data, and the last $k$ rows of rainfall data.
+
+With this, $k$ can easily be adjusted in once place to affect all graphs. 
+Similarly, specific $k$ values can be made into datasets in needed. For the
+majority of this paper, a $k$ value of $3$ will be used, but this isn't 
+necessarily the correct $k$ value.
+
+```{r building a rainfall delay dataset, include = FALSE}
+  ## how many days you want to adjust the rainfall by
+  k = 3
+
+  Lake_Bilancino_adjust_k <- 
+    Lake_Bilancino_restricted[(1+k):nrow(Lake_Bilancino_restricted),]
+  
+  for (i in 2:6) {
+    Lake_Bilancino_adjust_k[,i] <- 
+      Lake_Bilancino_restricted[1:(nrow(Lake_Bilancino_restricted)-k), i]
+  }
+```
+
+```{r small sample data, include = FALSE}
+  set.seed(42)
+  mini <- floor(0.5 * nrow(Lake_Bilancino_adjust_k))
+  mini_index <- sample(1:nrow(Lake_Bilancino_adjust_k), mini)
+```
+
+## Pairs Plot
+```{r pairs plot, echo = FALSE}
+  pairs(Lake_Bilancino_adjust_k[mini_index,])
+```
+
+The pairs plot for the data set doesn't seem to give much insight into any
+correlations between variables. Even when taking a subsample of the data, it
+appears as a jumbled mess. The outcome variables **Lake_Level** and 
+**Flow_Rate** seem to have no correlation with the predictors. One thing of note 
+is the shape of **Lake_Level** under **Date** and **Temperature** under **Date**.
+Unfortunately, in this diagram you can't see it, but they both have a similar
+sinusoidal pattern. Because of this, **Lake_Level** was chosen as the outcome
+variable. For predictors, **Temperature_Le_Croci**, **Rainfall_Le_Croci**, 
+**Rainfall_S_Piero**, and **Date** were all chosen. 
+
+## Graphical Exploration
+### Boxplot
+```{r rainfall boxplots, echo = FALSE}
+  ggplot(Lake_Bilancino_restricted, aes(Date, Rainfall_Le_Croci)) +
+    geom_col(color = "dodgerblue4") + 
+    labs(title = "Rainfall in Le Croci from 2004 to 2020", x = "Date", 
+         y = "Rainfall (mm)") +
+    theme(axis.text.x = element_text(angle = 45, vjust = 0.8)) +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+```
+A simple boxplot of the rainfall for Le Croci was made. Since lake level isn't 
+represented, the original dataset is used, i.e. $k=0$. While the rainfall data
+is different, the overall shape and summary is the same so only one plot is 
+needed.
+
+From the summary above, this data contains a lot of 0 values. Further 
+transformation of these values will be required.
+
+### Scatterplot
+```{r scatterplot rainfall v lake level, echo = FALSE}
+  ggplot(Lake_Bilancino_adjust_k[mini_index,], aes(x = Rainfall_S_Piero, 
+                                      y = (Lake_Level - 221))) +
+    geom_point(alpha = 0.2, color = "dodgerblue4") +
+    labs(title = "Rainfall in San Piero vs. Lake Bilancino's Water Level",
+         subtitle = "Rainfall affects Lake Level after 3 days.",
+         caption = "k = 3",
+         x = "Rainfall in San Piero (mm)", 
+         y = "Lake Bilancino's Level (m)")
+```
+
+A closer look at scatterplot between rainfall and lake level shows there's no
+obvious correlation. A subsample was taken to reduce points, and a $k$ value of
+$3$ is used, but it appears that rainfall has no real affect on the lake's water
+level. The plethora of zero values for the rainfall can be easily seen here by
+the dark blue line on the $y$-axis.
+
+### Histogram
+```{r histogram, echo = FALSE}
+  ggplot(Lake_Bilancino_restricted, aes(factor(year(Date)), (Lake_Level - 221))) +
+    geom_boxplot(color = "white", fill = "dodgerblue4") + 
+    labs(title = "Histogram of Lake Bilancino's Level each Year", x = "Year", 
+         y = "Lake Bilancino's Level (m)") + 
+    theme_dark() +
+    theme(axis.text.x = element_text(angle = 45, vjust = 0.8))
+```
+This graph shows a histogram of the lake's water level at each year. Some 
+noteworthy years include 2011 due to its high variance, 2012 for its low levels,
+and 2014 for the outliers where apparently the lake rose above its max level of
+31 m. 
+
+### Line Graph
+```{r line graph, echo = FALSE}
+  ggplot(Lake_Bilancino_restricted) +
+    geom_line(aes(x = Date, y = (Temperature_Le_Croci/2.5 + 22)), color = "gray") +
+    geom_line(aes(Date, (Lake_Level - 221)), size = 0.65) +
+    theme(axis.text.x = element_text(angle = 45, vjust = 0.8)) +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+    labs(title = "Lake Bilancino's Water Level over Time", x = "Date", 
+         y = "Lake Bilancino's Level (m)")
+```
+As mentioned in the pairs plot section, both **Lake_Level** and **Temperature** 
+had a similar shape when plotted over time. This graph plots the lake level (in
+black) over time. Behind it (in gray) is a scaled down and shifted up graph of
+temperature (so the $y$-values don't correspond to the actual temperature). This 
+is only done highlight the similarity in patterns.
+
+Unfortunately, this trend probably isn't due to any causation. We know that the
+lake level fluctuates seasonally (rises in winter, lowers in summer) and so does 
+temperature. But so far, this is the strongest connection we've seen.
+
+### Stat Summary Plot
+```{r stat summary plot, echo = FALSE}
+  ggplot(Lake_Bilancino_adjust_k, 
+         aes(x = Temperature_Le_Croci, y = Rainfall_Le_Croci, 
+             z = (Lake_Level - 221))) +
+    stat_summary_2d(bins = 10) +
+    labs(title = "Temperature vs. Rainfall vs. Lake Level", 
+         subtitle = "Rainfall affects Lake Level after 3 days.",
+         caption = "k = 3",
+         x = "Temperature in Le Croci (°C)", 
+         y = "Rainfall in Le Croci (mm)", 
+         fill = "Lake Water Level (m)")
+```
+Here, rainfall, temperature, and lake level are all plotted together. The 
+number of bins was reduced to 10 in order to get a very general picture. If we
+look at the boxes where water level is the lowest (potential drought territory)
+we see that they're when rainfall is above 50 mm and the temperature is below 
+$45^{\circ}\text{F}$ or above $59^{\circ}\text{F}$. Whereas rainfall above 50 mm
+and within that temperature range seems to relate to an almost full lake. 
+
+## Single Plot
+```{r single plot over time, echo = FALSE}
+  ggplot(Lake_Bilancino_adjust_k[mini_index,]) +
+    theme_dark() +
+    geom_col(aes(Date, Rainfall_Le_Croci), color = "#c86b85") +
+    geom_col(aes(Date, Rainfall_S_Piero), color = "#1fab89") +
+    geom_line(aes(Date, Temperature_Le_Croci), color = "#fdffab") +
+    geom_line(aes(Date, (Lake_Level - 221)), color = "#defcf9", size = 1) +
+    labs(title = "Rainfall, Temperature, and Lake Level over Time",
+         subtitle = "Rainfall affects level after 3 days.",
+         caption = "k = 3",
+         y = "")
+```
+Finally, all of the chosen variables are plotted together over time. The blue 
+line is the lake level, the yellow line is the temperature, the red bars are the
+rainfall for Le Croci, and the green bars are the rainfall for San Piero. A 
+subsample of the data was taken in hopes of decluttering the graph, but it's 
+still a mess.
+
+Let's instead take a closer look at a particular year.
+
+```{r single plot over 2012, echo = FALSE}
+  ggplot(Lake_Bilancino_adjust_k[
+         year(Lake_Bilancino_adjust_k$Date) == 2012,]) +
+    theme_dark() +
+    geom_col(aes(Date, Rainfall_Le_Croci), color = "#c86b85") +
+    geom_col(aes(Date, Rainfall_S_Piero), color = "#1fab89") +
+    geom_line(aes(Date, Temperature_Le_Croci), color = "#fdffab") +
+    geom_line(aes(Date, (Lake_Level - 221)), color = "#defcf9", size = 1) +
+    labs(title = "Rainfall, Temperature, and Lake Level over the Year 2012",
+         subtitle = "Rainfall affects level after 3 days.",
+         caption = "k = 3",
+         y = "")
+```
+The year 2012 was chosen due to its particularly low levels in the histogram 
+plot. A potential relation can be seen here where rainfall relates to lake level
+rising and no rainfall relates to lake level lowering. Whether or not it's a 
+cause is undecided at this time.
+
+## Causes
+Unfortunately, not much can be said for causality between the variables. Both 
+rainfall and temperature seem to relate to lake level but the exploration into 
+the two gave no clear indication of causation.
+
+The most likely scenario in each case is a hidden third variable. Rainfall 
+causes this hidden variable which in turn causes lake level and the same for 
+temperature (with a different hidden variable). 
+
+Because of the complex nature of predicting water levels, and the many factors 
+that go into it, the hidden variable might actually be multiple variables. 
+
+(see cause image in folder)
+
+## Difficulties
+In this dataset, rainfall provided the most difficulty. Trying to adjust for the
+unknown delay made things hard. I couldn't be certain if the data I was viewing
+was an accurate representation. I would try different $k$ values and usually it
+wouldn't make much of a difference. 
+
+Also, due to the nature of the data, it wasn't as simple to investigate as it
+has been in class. Everything has to be viewed over time to show any meaning and
+from there it's hard to tell if there's any correlations.
+
+## Other Datasets
+Since the Acea Group had multiple datasets on different waterbodies, one of
+those could be beneficial to combine with this one. The waterbodies are said to 
+be independent of each other and have different variables but if the end goal is
+to predict not just Lake Bilancino but all of the waterbody's water levels, 
+obviously the other datasets will be needed.
